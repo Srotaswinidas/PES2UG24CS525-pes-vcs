@@ -95,12 +95,46 @@ int object_exists(const ObjectID *id) {
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     // Step 1: Build the header
+    int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
+    // Step 1: Build the header
     const char *type_str;
     switch (type) {
         case OBJ_BLOB:   type_str = "blob"; break;
         case OBJ_TREE:   type_str = "tree"; break;
         case OBJ_COMMIT: type_str = "commit"; break;
         default: return -1;
+    }
+    
+    // Create header: "<type> <size>\0"
+    int header_len = snprintf(NULL, 0, "%s %zu", type_str, len) + 1;
+    char *header = malloc(header_len);
+    if (!header) return -1;
+    snprintf(header, header_len, "%s %zu", type_str, len);
+    header[header_len - 1] = '\0';
+    
+    // Step 2: Combine header + data and compute hash
+    size_t full_len = header_len + len;
+    void *full_data = malloc(full_len);
+    if (!full_data) {
+        free(header);
+        return -1;
+    }
+    memcpy(full_data, header, header_len);
+    memcpy((char*)full_data + header_len, data, len);
+    
+    compute_hash(full_data, full_len, id_out);
+    
+    // Step 3: Check if object already exists (deduplication)
+    if (object_exists(id_out)) {
+        free(header);
+        free(full_data);
+        return 0;
+    }
+    
+    free(header);
+    free(full_data);
+    return -1;
+}
     }
     
     // Create header: "<type> <size>\0"
