@@ -155,7 +155,6 @@ int index_save(const Index *index) {
     FILE *f = fopen(tmp_path, "w");
     if (!f) return -1;
     
-    // Copy and sort entries
     IndexEntry *sorted = malloc(index->count * sizeof(IndexEntry));
     if (!sorted && index->count > 0) {
         fclose(f);
@@ -174,9 +173,25 @@ int index_save(const Index *index) {
     }
     
     free(sorted);
+    
+    // Flush and sync to disk
+    fflush(f);
+    fsync(fileno(f));
     fclose(f);
     
-    rename(tmp_path, INDEX_FILE);
+    // Atomic rename
+    if (rename(tmp_path, INDEX_FILE) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+    
+    // Sync directory
+    int dir_fd = open(PES_DIR, O_RDONLY);
+    if (dir_fd >= 0) {
+        fsync(dir_fd);
+        close(dir_fd);
+    }
+    
     return 0;
 }
 
