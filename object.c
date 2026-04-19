@@ -95,8 +95,6 @@ int object_exists(const ObjectID *id) {
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     // Step 1: Build the header
-    int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
-    // Step 1: Build the header
     const char *type_str;
     switch (type) {
         case OBJ_BLOB:   type_str = "blob"; break;
@@ -104,6 +102,67 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         case OBJ_COMMIT: type_str = "commit"; break;
         default: return -1;
     }
+    
+    // Create header: "<type> <size>\0"
+    int header_len = snprintf(NULL, 0, "%s %zu", type_str, len) + 1;
+    char *header = malloc(header_len);
+    if (!header) return -1;
+    snprintf(header, header_len, "%s %zu", type_str, len);
+    header[header_len - 1] = '\0';
+    
+    // Step 2: Combine header + data and compute hash
+    size_t full_len = header_len + len;
+    void *full_data = malloc(full_len);
+    if (!full_data) {
+        free(header);
+        return -1;
+    }
+    memcpy(full_data, header, header_len);
+    memcpy((char*)full_data + header_len, data, len);
+    
+    compute_hash(full_data, full_len, id_out);
+    
+    // Step 3: Check if object already exists (deduplication)
+    if (object_exists(id_out)) {
+        free(header);
+        free(full_data);
+        return 0;
+    }
+    
+    // Step 4: Create shard directory
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+    char shard_dir[512];
+    snprintf(shard_dir, sizeof(shard_dir), "%s/%.2s", OBJECTS_DIR, hex);
+    mkdir(shard_dir, 0755);
+    
+    // Step 5: Write to temporary file
+    char tmp_path[512];
+    snprintf(tmp_path, sizeof(tmp_path), "%s/tmp_XXXXXX", shard_dir);
+    int fd = mkstemp(tmp_path);
+    if (fd < 0) {
+        free(header);
+        free(full_data);
+        return -1;
+    }
+    
+    ssize_t written = write(fd, full_data, full_len);
+    if (written != (ssize_t)full_len) {
+        close(fd);
+        unlink(tmp_path);
+        free(header);
+        free(full_data);
+        return -1;
+    }
+    
+    // Step 6: fsync() the temporary file
+    fsync(fd);
+    close(fd);
+    
+    free(header);
+    free(full_data);
+    return -1;
+}
     
     // Create header: "<type> <size>\0"
     int header_len = snprintf(NULL, 0, "%s %zu", type_str, len) + 1;
