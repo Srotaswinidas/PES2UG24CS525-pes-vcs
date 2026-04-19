@@ -258,7 +258,90 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 // The caller is responsible for calling free(*data_out).
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+    // Step 1: Build the file path from the hash using object_path()
+    char path[512];
+    object_path(id, path, sizeof(path));
+    
+    // Step 2: Open and read the entire file
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    void *file_data = malloc(file_size);
+    if (!file_data) {
+        fclose(f);
+        return -1;
+    }
+    
+    size_t bytes_read = fread(file_data, 1, file_size, f);
+    fclose(f);
+    
+    if (bytes_read != (size_t)file_size) {
+        free(file_data);
+        return -1;
+    }
+    
+    // Step 4: Verify integrity: recompute the SHA-256
+    ObjectID computed_id;
+    compute_hash(file_data, file_size, &computed_id);
+    if (memcmp(&computed_id, id, sizeof(ObjectID)) != 0) {
+        free(file_data);
+        return -1;
+    }
+    
+    // Step 3: Parse the header
+    char *ptr = (char*)file_data;
+    char *null_pos = memchr(ptr, '\0', file_size);
+    if (!null_pos) {
+        free(file_data);
+        return -1;
+    }
+    
+    char *space = memchr(ptr, ' ', null_pos - ptr);
+    if (!space) {
+        free(file_data);
+        return -1;
+    }
+    
+    size_t type_len = space - ptr;
+    if (type_len == 4 && strncmp(ptr, "blob", 4) == 0) {
+        *type_out = OBJ_BLOB;
+    } else if (type_len == 4 && strncmp(ptr, "tree", 4) == 0) {
+        *type_out = OBJ_TREE;
+    } else if (type_len == 6 && strncmp(ptr, "commit", 6) == 0) {
+        *type_out = OBJ_COMMIT;
+    } else {
+        free(file_data);
+        return -1;
+    }
+    
+    char *size_str = space + 1;
+    size_t size_len = null_pos - size_str;
+    char size_buf[32] = {0};
+    if (size_len >= sizeof(size_buf)) {
+        free(file_data);
+        return -1;
+    }
+    memcpy(size_buf, size_str, size_len);
+    *len_out = strtoul(size_buf, NULL, 10);
+    
+    // Step 6: Allocate buffer and copy data portion
+    size_t data_offset = (null_pos - (char*)file_data) + 1;
+    if (data_offset + *len_out > (size_t)file_size) {
+        free(file_data);
+        return -1;
+    }
+    
+    *data_out = malloc(*len_out);
+    if (!*data_out) {
+        free(file_data);
+        return -1;
+    }
+    memcpy(*data_out, (char*)file_data + data_offset, *len_out);
+    
+    free(file_data);
+    return 0;
 }
