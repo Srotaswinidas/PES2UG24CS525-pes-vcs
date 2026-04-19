@@ -163,6 +163,93 @@ static void add_entry(EntryList *list, TreeEntry *entry) {
     }
     list->entries[list->count++] = *entry;
 }
+static int write_tree_level(TreeEntry *all_entries, int total_count, int depth, ObjectID *id_out) {
+    if (total_count == 0) return -1;
+    
+    Tree tree;
+    tree.count = 0;
+    
+    EntryList current_entries = {0};
+    current_entries.capacity = 10;
+    current_entries.entries = malloc(current_entries.capacity * sizeof(TreeEntry));
+    
+    typedef struct {
+        char name[256];
+        TreeEntry *children;
+        int child_count;
+        int child_capacity;
+    } Subdir;
+    
+    Subdir subdirs[100];
+    int subdir_count = 0;
+    
+    for (int i = 0; i < total_count; i++) {
+        TreeEntry *entry = &all_entries[i];
+        char *slash = strchr(entry->name + depth, '/');
+        
+        if (slash == NULL) {
+            add_entry(&current_entries, entry);
+        } else {
+            int name_len = slash - (entry->name + depth);
+            char dir_name[256];
+            memcpy(dir_name, entry->name + depth, name_len);
+            dir_name[name_len] = '\0';
+            
+            int found = -1;
+            for (int s = 0; s < subdir_count; s++) {
+                if (strcmp(subdirs[s].name, dir_name) == 0) {
+                    found = s;
+                    break;
+                }
+            }
+            if (found == -1) {
+                found = subdir_count++;
+                strcpy(subdirs[found].name, dir_name);
+                subdirs[found].children = NULL;
+                subdirs[found].child_count = 0;
+                subdirs[found].child_capacity = 0;
+            }
+            
+            Subdir *sd = &subdirs[found];
+            if (sd->child_count >= sd->child_capacity) {
+                sd->child_capacity = sd->child_capacity * 2 + 5;
+                sd->children = realloc(sd->children, sd->child_capacity * sizeof(TreeEntry));
+            }
+            sd->children[sd->child_count++] = *entry;
+        }
+    }
+    
+    for (int s = 0; s < subdir_count; s++) {
+        Subdir *sd = &subdirs[s];
+        ObjectID subtree_hash;
+        
+        if (write_tree_level(sd->children, sd->child_count, depth + strlen(sd->name) + 1, &subtree_hash) == 0) {
+            TreeEntry subtree_entry;
+            subtree_entry.mode = MODE_DIR;
+            subtree_entry.hash = subtree_hash;
+            strcpy(subtree_entry.name, sd->name);
+            add_entry(&current_entries, &subtree_entry);
+        }
+        free(sd->children);
+    }
+    
+    tree.count = current_entries.count;
+    for (int i = 0; i < current_entries.count; i++) {
+        tree.entries[i] = current_entries.entries[i];
+    }
+    
+    void *serialized;
+    size_t serialized_len;
+    if (tree_serialize(&tree, &serialized, &serialized_len) != 0) {
+        free(current_entries.entries);
+        return -1;
+    }
+    
+    int result = object_write(OBJ_TREE, serialized, serialized_len, id_out);
+    free(serialized);
+    free(current_entries.entries);
+    return result;
+}
 int tree_from_index(ObjectID *id_out) {
     // TODO: Implement recursive tree building
     // (See Lab Appendix for logical steps)
