@@ -155,13 +155,29 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return -1;
     }
     
-    // Step 6: fsync() the temporary file
     fsync(fd);
     close(fd);
     
+    // Step 7: rename() the temp file to the final path (atomic on POSIX)
+    char final_path[512];
+    object_path(id_out, final_path, sizeof(final_path));
+    if (rename(tmp_path, final_path) != 0) {
+        unlink(tmp_path);
+        free(header);
+        free(full_data);
+        return -1;
+    }
+    
+    // Step 8: Open and fsync() the shard directory to persist the rename
+    int dir_fd = open(shard_dir, O_RDONLY);
+    if (dir_fd >= 0) {
+        fsync(dir_fd);
+        close(dir_fd);
+    }
+    
     free(header);
     free(full_data);
-    return -1;
+    return 0;
 }
     
     // Create header: "<type> <size>\0"
