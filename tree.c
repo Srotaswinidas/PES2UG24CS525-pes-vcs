@@ -150,6 +150,19 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 //   - object_write    : save that binary buffer to the store as OBJ_TREE
 //
 // Returns 0 on success, -1 on error.
+typedef struct {
+    TreeEntry *entries;
+    int count;
+    int capacity;
+} EntryList;
+
+static void add_entry(EntryList *list, TreeEntry *entry) {
+    if (list->count >= list->capacity) {
+        list->capacity = list->capacity * 2 + 10;
+        list->entries = realloc(list->entries, list->capacity * sizeof(TreeEntry));
+    }
+    list->entries[list->count++] = *entry;
+}
 int tree_from_index(ObjectID *id_out) {
     // TODO: Implement recursive tree building
     // (See Lab Appendix for logical steps)
