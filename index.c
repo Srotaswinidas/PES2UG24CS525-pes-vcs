@@ -143,10 +143,41 @@ int index_load(Index *index) {
     fclose(f);
     return 0;
 }
-
+static int compare_index_entries(const void *a, const void *b) {
+    return strcmp(((const IndexEntry *)a)->path, ((const IndexEntry *)b)->path);
+}
 int index_save(const Index *index) {
-    (void)index;
-    return -1;
+    mkdir(PES_DIR, 0755);
+    
+    char tmp_path[512];
+    snprintf(tmp_path, sizeof(tmp_path), "%s/index.tmp", PES_DIR);
+    
+    FILE *f = fopen(tmp_path, "w");
+    if (!f) return -1;
+    
+    // Copy and sort entries
+    IndexEntry *sorted = malloc(index->count * sizeof(IndexEntry));
+    if (!sorted && index->count > 0) {
+        fclose(f);
+        return -1;
+    }
+    
+    memcpy(sorted, index->entries, index->count * sizeof(IndexEntry));
+    qsort(sorted, index->count, sizeof(IndexEntry), compare_index_entries);
+    
+    for (int i = 0; i < index->count; i++) {
+        char hash_hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&sorted[i].hash, hash_hex);
+        fprintf(f, "%u %s %lu %u %s\n", 
+                sorted[i].mode, hash_hex, 
+                sorted[i].mtime_sec, sorted[i].size, sorted[i].path);
+    }
+    
+    free(sorted);
+    fclose(f);
+    
+    rename(tmp_path, INDEX_FILE);
+    return 0;
 }
 
 int index_add(Index *index, const char *path) {
