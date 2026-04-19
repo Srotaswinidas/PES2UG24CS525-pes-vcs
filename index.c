@@ -194,8 +194,50 @@ int index_save(const Index *index) {
     
     return 0;
 }
-
 int index_add(Index *index, const char *path) {
-    (void)index; (void)path;
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        fprintf(stderr, "error: file '%s' does not exist\n", path);
+        return -1;
+    }
+    
+    if (!S_ISREG(st.st_mode)) {
+        fprintf(stderr, "error: '%s' is not a regular file\n", path);
+        return -1;
+    }
+    
+    // Read file content
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    void *content = malloc(size);
+    if (!content) {
+        fclose(f);
+        return -1;
+    }
+    
+    fread(content, 1, size, f);
+    fclose(f);
+    
+    // Write blob to object store
+    ObjectID blob_hash;
+    if (object_write(OBJ_BLOB, content, size, &blob_hash) != 0) {
+        free(content);
+        return -1;
+    }
+    free(content);
+    
+    // Set mode
+    uint32_t mode = 0100644;
+    if (st.st_mode & 0111) mode = 0100755;
+    
+    (void)mode;
+    (void)blob_hash;
+    
     return -1;
 }
+
